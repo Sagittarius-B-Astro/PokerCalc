@@ -1,0 +1,8 @@
+network: 16450 parameters (64.3 KB as float32); 15000 rows
+  preflop  n=  3786  MAE win 0.40%  tie 0.24%  equity 0.41%
+  flop     n=  3775  MAE win 2.04%  tie 1.10%  equity 2.05%
+  turn     n=  3715  MAE win 2.44%  tie 1.49%  equity 2.43%
+  river    n=  3724  MAE win 2.90%  tie 2.02%  equity 3.05%
+  overall  MAE win 1.94%  tie 1.21%  equity 1.98%
+  speed: 2.84 microseconds per prediction (features + network)
+  reference: plain Monte Carlo with 1,000 showdowns: 137.5 microseconds, equity MAE 1.10% (first 300 rows)

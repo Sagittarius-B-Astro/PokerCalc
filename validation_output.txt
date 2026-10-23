@@ -1,0 +1,73 @@
+
+Part A: exhaustive check over all C(52,7) seven-card hands
+  evaluated 133784560 hands in 4.7s (28.3 M hands/s)
+    High Card            23294460  (expected 23294460)
+    Pair                 58627800  (expected 58627800)
+    Two Pair             31433400  (expected 31433400)
+    Three of a Kind       6461620  (expected 6461620)
+    Straight              6180020  (expected 6180020)
+    Flush                 4047644  (expected 4047644)
+    Full House            3473184  (expected 3473184)
+    Four of a Kind         224848  (expected 224848)
+    Straight Flush          41584  (expected 41584)
+  [PASS] total hands == C(52,7)
+  [PASS] category counts match the published 7-card table
+  distinct hand strengths found: 4824
+  [PASS] distinct 7-card hand strengths == 4,824
+
+Part B: hand-written ordering checks
+  [PASS] wheel (A-5 straight) loses to a six-high straight
+  [PASS] straight flush beats full house
+  [PASS] aces full beats kings full
+  [PASS] ace-high flush beats king-high flush (flush outranks the wheel)
+  [PASS] four of a kind beats full house
+  [PASS] same pair, same first two kickers: better third kicker wins
+  [PASS] identical ranks in different suits tie exactly
+  [PASS] two pair: kicker is the best leftover rank (4 beats 3)
+  [PASS] three pairs: the third pair's rank serves as kicker (J beats T)
+  [PASS] three pairs is classified as two pair
+  [PASS] quads plus trips is classified as quads
+
+Part C: estimators vs exact enumeration
+  [PASS] river heads-up: hybrid is exact (se = 0) and equals enumeration
+  river heads-up, plain MC 50k       equity  39.609% +/- 0.218  (exact  39.242%)  z=1.68  n=50000
+  [PASS] river heads-up, plain MC 50k within 4 standard errors of exact
+  [PASS] turn heads-up: hybrid enumerates every runout and equals enumeration
+  flop heads-up exact: 1070190 showdowns in 0.07s
+  [PASS] flop heads-up has 1,070,190 leaves (1081 holdings x 990 runouts)
+  flop heads-up, hybrid 40k          equity  72.439% +/- 0.201  (exact  72.683%)  z=1.21  n=39997
+  [PASS] flop heads-up, hybrid 40k within 4 standard errors of exact
+  flop heads-up, plain MC 40k        equity  72.530% +/- 0.222  (exact  72.683%)  z=0.69  n=40000
+  [PASS] flop heads-up, plain MC 40k within 4 standard errors of exact
+  river, 2 random opps, plain MC 50k equity  14.496% +/- 0.156  (exact  14.676%)  z=1.15  n=50000
+  [PASS] river, 2 random opps, plain MC 50k within 4 standard errors of exact
+  river, 2 random opps, hybrid 50k   equity  14.533% +/- 0.135  (exact  14.676%)  z=1.06  n=49500
+  [PASS] river, 2 random opps, hybrid 50k within 4 standard errors of exact
+  (range test: exact enumeration has 5754 legal showdowns)
+  overlapping ranges, plain MC over 60 repeats: mean z -0.05, rms z 0.89 (ideal 0, 1)
+  [PASS] overlapping ranges, plain MC: unbiased and SE calibrated
+  overlapping ranges, hybrid   over 60 repeats: mean z +0.08, rms z 1.09 (ideal 0, 1)
+  [PASS] overlapping ranges, hybrid: unbiased and SE calibrated
+  [PASS] 3-way tie on a royal-flush board: win 0, tie 1, equity exactly 1/3
+
+Part D: honesty of reported standard errors, and variance reduction (200 repeats each)
+  spot AsKs | Qs7s2d heads-up vs random, 4324 showdowns per estimate
+    plain MC reported SE 0.6746% | actual spread 0.6325% | 95% interval covered truth 194/200
+  [PASS] AsKs plain MC: reported SE matches actual spread (within 20%)
+  [PASS] AsKs plain MC: 95% intervals cover truth 90-99% of the time
+    hybrid   reported SE 0.6111% | actual spread 0.6327% | 95% interval covered truth 189/200
+  [PASS] AsKs hybrid: reported SE matches actual spread (within 20%)
+  [PASS] AsKs hybrid: 95% intervals cover truth 90-99% of the time
+    actual spread plain/hybrid = 1.00x (>1 means hybrid is better)
+  [PASS] AsKs: hybrid is no worse than plain MC at equal showdowns (within 5%)
+  spot 9c9d | Ah7s2d heads-up vs random, 4324 showdowns per estimate
+    plain MC reported SE 0.6808% | actual spread 0.6948% | 95% interval covered truth 190/200
+  [PASS] 9c9d plain MC: reported SE matches actual spread (within 20%)
+  [PASS] 9c9d plain MC: 95% intervals cover truth 90-99% of the time
+    hybrid   reported SE 0.5280% | actual spread 0.5343% | 95% interval covered truth 193/200
+  [PASS] 9c9d hybrid: reported SE matches actual spread (within 20%)
+  [PASS] 9c9d hybrid: 95% intervals cover truth 90-99% of the time
+    actual spread plain/hybrid = 1.30x (>1 means hybrid is better)
+  [PASS] 9c9d: hybrid is no worse than plain MC at equal showdowns (within 5%)
+
+ALL CHECKS PASSED (0 failed checks)
