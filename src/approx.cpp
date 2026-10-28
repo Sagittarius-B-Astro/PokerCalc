@@ -9,6 +9,8 @@
 
 namespace pk {
 
+static constexpr int kMaxLayerWidth = 256;
+
 Net Net::load(const std::string& path) {
   FILE* fp = std::fopen(path.c_str(), "rb");
   if (!fp) throw std::runtime_error("cannot open weights file: " + path);
@@ -22,6 +24,11 @@ Net Net::load(const std::string& path) {
     int32_t in = 0, out = 0;
     if (std::fread(&in, 4, 1, fp) != 1 || std::fread(&out, 4, 1, fp) != 1 || in < 1 || out < 1)
       throw std::runtime_error("corrupt weights file");
+    if (out > kMaxLayerWidth)
+      throw std::runtime_error("layer " + std::to_string(l) +
+                               " too wide for inference buffer: out=" +
+                               std::to_string(out) + " (max " +
+                               std::to_string(kMaxLayerWidth) + ")");
     Layer L{in, out, std::vector<float>(size_t(in) * out), std::vector<float>(out)};
     if (std::fread(L.W.data(), 4, L.W.size(), fp) != L.W.size() ||
         std::fread(L.b.data(), 4, L.b.size(), fp) != L.b.size())
@@ -39,7 +46,7 @@ size_t Net::num_params() const {
 }
 
 void Net::predict(const float* x, float& win, float& tie) const {
-  float bufA[256], bufB[256];
+  float bufA[kMaxLayerWidth], bufB[kMaxLayerWidth];
   const float* in = x;
   float* out = bufA;
   for (size_t l = 0; l < layers_.size(); ++l) {

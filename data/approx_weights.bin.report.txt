@@ -1,0 +1,15 @@
+TEST SET (never used for training or epoch selection): 15000 rows
+  MAE  win 2.01%  tie 1.19%  equity 2.03%
+  equity error percentiles: p50=1.30%  p90=4.73%  p99=9.69%  max=29.63%
+  share of predictions within: 1%: 41.1%  2%: 63.5%  5%: 91.3%  10%: 99.1%
+  baseline (predict the per-street average equity): MAE 17.64%
+  label noise: mean reported label SE 0.18% (expected MAE floor from noise alone ~0.14%)
+  by street (equity MAE):  preflop 0.66%  flop 2.09%  turn 2.53%  river 2.86%
+  by hero's made hand (equity MAE, rows):
+     High Card       1.49%   n=7347
+     Pair            2.42%   n=5247
+     Two Pair        3.15%   n=1475
+     Trips           2.06%   n=393
+     Straight        2.85%   n=248
+     Flush           2.72%   n=163
+     Full House      1.57%   n=118

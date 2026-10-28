@@ -17,3 +17,18 @@ test: validate
 
 clean:
 	rm -f poker validate
+
+wasm:
+	em++ -O3 -std=c++17 -I src \
+	  src/equity.cpp src/features.cpp src/approx.cpp src/wasm_bindings.cpp \
+	  --bind \
+	  -s MODULARIZE=1 \
+	  -s EXPORT_NAME=createPokerModule \
+	  -s ALLOW_MEMORY_GROWTH=1 \
+	  -s ENVIRONMENT=web,worker \
+	  --preload-file data/approx_weights_s0.bin \
+	  --preload-file data/approx_weights_s1.bin \
+	  --preload-file data/approx_weights_s2.bin \
+	  --preload-file data/approx_weights_s3.bin \
+	  --preload-file data/approx_weights.bin \
+	  -o docs/poker.js

@@ -7,22 +7,23 @@ INPUT  : 62 cheap features of (hero hole cards, board) written by `poker gen-dat
 TARGET : two numbers per state: P(win) and P(tie) vs ONE random opponent, produced by
          the C++ equity engine (exact on turn/river, stratified Monte Carlo on
          preflop/flop). Equity is then win + tie/2.
-MODEL  : fully connected net 62 -> 64 -> 32 -> 2, ELU hidden units, sigmoid outputs,
-         mean-squared-error loss, Adam optimiser. This is the same recipe as the
-         reference paper (p-24-12-2, ELU, sigmoid, Adam, MSE), made a little wider
-         because our feature vector is larger.
+MODEL  : fully connected net 62 -> 128 -> 64 -> 2, ELU hidden units, sigmoid outputs,
+         mean-squared-error loss, Adam optimiser.
 
-Why plain numpy and not PyTorch: this sandbox has no PyTorch. The network is small
-enough that the hand-written forward/backward pass below is short and, being explicit,
-easy to check. In your own environment the same architecture is ~15 lines of PyTorch.
+Usage (single model):
+  python train_approx.py --train train.csv --test data/test_dataset.csv
 
-Why synthetic data: there is no dataset of "true equities" to download. The labels come
-from simulating the exact process we want to learn (a uniformly random deal), so they
-are unbiased samples of the truth, with a known and reported noise level (`eq_se`).
+Usage (per-street, the shipped configuration):
+  python train_approx.py --train train.csv --test data/test_dataset.csv \
+                         --per-street --hidden 128 64 --epochs 300 --seed 2
 
-Usage:  python train_approx.py --train train.csv --test test.csv --out approx_weights.bin
+Usage (K-fold CV, report only, no export):
+  python train_approx.py --train train.csv --test data/test_dataset.csv --kfold 5
+
+Default output is data/approx_weights.bin (single) or data/approx_weights_s0..s3.bin (per-street).
 """
 import argparse
+import os
 import struct
 import time
 
@@ -114,6 +115,9 @@ def equity(Y):
 # --------------------------------------------------------------------------- export
 def export_weights(net, path):
     """Write the PKAP binary format read by src/approx.cpp (float32, little endian)."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "wb") as f:
         f.write(b"PKAP")
         f.write(struct.pack("<i", len(net.W)))
@@ -121,6 +125,48 @@ def export_weights(net, path):
             f.write(struct.pack("<ii", W.shape[0], W.shape[1]))
             f.write(W.astype("<f4").tobytes())
             f.write(b.astype("<f4").tobytes())
+
+
+# --------------------------------------------------------------------------- training
+def lr_at(ep, args):
+    """Linear warmup then cosine decay to --min-lr."""
+    if ep < args.warmup:
+        return args.lr * (ep + 1) / max(1, args.warmup)
+    t = (ep - args.warmup) / max(1, args.epochs - args.warmup)
+    t = min(max(t, 0.0), 1.0)
+    return args.min_lr + 0.5 * (args.lr - args.min_lr) * (1 + np.cos(np.pi * t))
+
+
+def train_one(Xtr, Ytr, Xv, Yv, sizes, args, rng, verbose=True, tag=""):
+    """Train one network. Returns (net, best_val_mae, best_epoch)."""
+    net = MLP(sizes, rng)
+    opt = Adam(net.params())
+    best_val, best_state, best_ep = 1e9, None, -1
+    since_best = 0
+    t0 = time.time()
+    for ep in range(args.epochs):
+        lr = lr_at(ep, args)
+        order = rng.permutation(len(Xtr))
+        for i in range(0, len(order), args.batch):
+            idx = order[i:i + args.batch]
+            gW, gb = net.gradients(Xtr[idx], Ytr[idx])
+            opt.step(net.params(), gW + gb, lr)
+        if (ep + 1) % 5 == 0 or ep == args.epochs - 1:
+            val = np.abs(equity(net.forward(Xv)) - equity(Yv)).mean()
+            if val < best_val:
+                best_val, best_state, best_ep = val, [p.copy() for p in net.params()], ep + 1
+                since_best = 0
+            else:
+                since_best += 5
+            if verbose:
+                print(f"{tag}epoch {ep+1:3d}  lr {lr:.5f}  val equity MAE {100*val:.3f}%  ({time.time()-t0:.0f}s)", flush=True)
+            if since_best >= args.patience:
+                if verbose:
+                    print(f"{tag}early stop: no improvement for {args.patience} epochs")
+                break
+    for p, s in zip(net.params(), best_state):
+        p[:] = s
+    return net, best_val, best_ep
 
 
 # --------------------------------------------------------------------------- reporting
@@ -154,12 +200,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", required=True)
     ap.add_argument("--test", required=True)
-    ap.add_argument("--out", default="approx_weights.bin")
-    ap.add_argument("--epochs", type=int, default=120)
+    ap.add_argument("--out", default="data/approx_weights.bin",
+                    help="weights file base name; per-street writes <base>_s0.bin ... <base>_s3.bin")
+    ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=3e-3)
-    ap.add_argument("--hidden", type=int, nargs="+", default=[64, 32])
+    ap.add_argument("--hidden", type=int, nargs="+", default=[128, 64])
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--warmup", type=int, default=5)
+    ap.add_argument("--min-lr", type=float, default=1e-5)
+    ap.add_argument("--patience", type=int, default=50)
+    ap.add_argument("--per-street", action="store_true")
+    ap.add_argument("--kfold", type=int, default=1)
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -167,42 +219,80 @@ def main():
     Xt, Yt, st_t, se_t = load_csv(args.test)
     print(f"loaded train {X.shape}, test {Xt.shape}")
 
-    # 90/10 train/validation split (validation picks the best epoch; test is never touched)
+    # 90/10 train/validation split
     perm = rng.permutation(len(X))
     n_val = len(X) // 10
     vi, ti = perm[:n_val], perm[n_val:]
-    Xtr, Ytr = X[ti], Y[ti]
-    Xv, Yv = X[vi], Y[vi]
 
     sizes = [N_FEATURES] + args.hidden + [2]
-    net = MLP(sizes, rng)
-    opt = Adam(net.params())
-    n_params = sum(p.size for p in net.params())
+    n_params = sum(i * o + o for i, o in zip(sizes[:-1], sizes[1:]))
     print(f"architecture {sizes}, {n_params} parameters ({n_params*4/1024:.1f} KB as float32)")
 
-    best_val, best_state = 1e9, None
-    t0 = time.time()
-    for ep in range(args.epochs):
-        lr = 1e-4 + 0.5 * (args.lr - 1e-4) * (1 + np.cos(np.pi * ep / args.epochs))  # cosine decay
-        order = rng.permutation(len(Xtr))
-        for i in range(0, len(order), args.batch):
-            idx = order[i:i + args.batch]
-            gW, gb = net.gradients(Xtr[idx], Ytr[idx])
-            opt.step(net.params(), gW + gb, lr)
-        if ep % 5 == 4 or ep == args.epochs - 1:
-            val = np.abs(equity(net.forward(Xv)) - equity(Yv)).mean()
-            if val < best_val:
-                best_val, best_state = val, [p.copy() for p in net.params()]
-            print(f"epoch {ep+1:3d}  lr {lr:.5f}  validation equity MAE {100*val:.3f}%  ({time.time()-t0:.0f}s)", flush=True)
+    if args.kfold > 1 and args.per_street:
+        raise SystemExit("--per-street and --kfold are not supported together")
 
-    for p, s in zip(net.params(), best_state):
-        p[:] = s
+    # ---------------- K-fold cross-validation (report only, no export) ----
+    if args.kfold > 1:
+        n = len(X)
+        print(f"running {args.kfold}-fold cross-validation on {n} training rows")
+        idx_all = rng.permutation(n)
+        folds = np.array_split(idx_all, args.kfold)
+        fold_maes = []
+        for k in range(args.kfold):
+            val_idx = folds[k]
+            tr_idx = np.concatenate([folds[j] for j in range(args.kfold) if j != k])
+            net, bv, be = train_one(X[tr_idx], Y[tr_idx], X[val_idx], Y[val_idx],
+                                    sizes, args, rng, verbose=False)
+            fold_maes.append(bv)
+            print(f"  fold {k+1}/{args.kfold}: best epoch {be}, val equity MAE {100*bv:.3f}%")
+        print(f"  CV equity MAE: mean {100*np.mean(fold_maes):.3f}%  std {100*np.std(fold_maes):.3f}%")
+        return
+
+    # ---------------- Per-street mode: 4 models, one per street ----------
+    if args.per_street:
+        print(f"per-street mode: training 4 models of architecture {sizes}")
+        base = args.out[:-4] if args.out.endswith(".bin") else args.out
+        nets = []
+        for s in range(4):
+            mask_tr = (street[ti] == s)
+            mask_v = (street[vi] == s)
+            mask_te = (st_t == s)
+            if mask_tr.sum() < 100:
+                raise SystemExit(f"street {STREETS[s]}: only {mask_tr.sum()} training rows, refusing to train")
+            print(f"\n=== {STREETS[s]}: {mask_tr.sum()} train / {mask_v.sum()} val / {mask_te.sum()} test ===")
+            net, bv, be = train_one(X[ti][mask_tr], Y[ti][mask_tr], X[vi][mask_v], Y[vi][mask_v],
+                                    sizes, args, rng, verbose=True, tag=f"[{STREETS[s]}] ")
+            print(f"  best epoch {be}, val MAE {100*bv:.3f}%")
+            nets.append(net)
+            path = f"{base}_s{s}.bin"
+            export_weights(net, path)
+            print(f"  wrote {path}")
+        print("\nPER-STREET TEST SET")
+        total_ae = []
+        for s in range(4):
+            mask = st_t == s
+            P = nets[s].forward(Xt[mask])
+            ae = np.abs(equity(P) - equity(Yt[mask]))
+            total_ae.append(ae)
+            print(f"  {STREETS[s]:8s} n={mask.sum():6d}"
+                  f"  MAE win {100*np.abs(P[:,0]-Yt[mask,0]).mean():.2f}%"
+                  f"  tie {100*np.abs(P[:,1]-Yt[mask,1]).mean():.2f}%"
+                  f"  equity {100*ae.mean():.2f}%")
+        print(f"  overall  MAE equity {100*np.concatenate(total_ae).mean():.2f}%")
+        return
+
+    # ---------------- Single-model path ------------------------------------
+    net, bv, be = train_one(X[ti], Y[ti], X[vi], Y[vi], sizes, args, rng, verbose=True)
+    print(f"best epoch {be}, val MAE {100*bv:.3f}%")
 
     base = np.array([equity(Y)[street == s].mean() for s in range(4)])
     text = report("TEST SET (never used for training or epoch selection)", net, Xt, Yt, st_t, se_t, base)
     print("\n" + text)
     export_weights(net, args.out)
     print(f"\nwrote {args.out}")
+    parent = os.path.dirname(args.out)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(args.out + ".report.txt", "w") as f:
         f.write(text + "\n")
 

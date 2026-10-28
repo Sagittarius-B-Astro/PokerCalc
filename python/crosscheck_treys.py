@@ -17,7 +17,6 @@ from treys import Card, Evaluator
 
 RANKS, SUITS = "23456789TJQKA", "cdhs"
 
-
 def main():
     exe = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 100_000

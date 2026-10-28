@@ -1,8 +1,5 @@
-.DS_Store
-node_modules/
 venv/
-.venv/
 __pycache__/
 *.pyc
-.env
-.vercel/
+train.csv
+.vscode/c_cpp_properties.json

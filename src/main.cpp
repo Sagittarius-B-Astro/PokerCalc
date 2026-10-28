@@ -4,8 +4,14 @@
 //                [--method hybrid|mc|exact] [--samples N] [--seed S]
 //   poker score  < file         one hand per line (2-7 cards); prints category and score
 //   poker gen-dataset --n N --seed S --out FILE      training data for the neural net
-//   poker approx --weights W.bin --hero AsKs [--board Qs7s2d]      neural-net equity vs 1 random opp
-//   poker approx-eval --weights W.bin --data FILE    accuracy + speed of the net on a dataset
+//   poker approx --weights W1[,W2,W3,W4] --hero AsKs [--board Qs7s2d]
+//                                 neural-net equity vs 1 random opponent
+//   poker approx-eval --weights W1[,W2,W3,W4] --data FILE
+//                                 accuracy + speed of the net on a dataset
+//
+// --weights is either one PKAP file (single model) or four comma-separated files
+// (per-street models in order: preflop, flop, turn, river).
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -51,6 +57,34 @@ static Args parse_args(int argc, char** argv, int start) {
 
 static std::vector<Card> board_arg(const std::string& s) {
   return (s.empty() || s == "-") ? std::vector<Card>{} : parse_cards(s);
+}
+
+// Split a comma-separated list of file paths. Empty entries are dropped.
+static std::vector<std::string> split_paths(const std::string& spec) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (char c : spec) {
+    if (c == ',') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
+    else cur.push_back(c);
+  }
+  if (!cur.empty()) out.push_back(cur);
+  return out;
+}
+
+// Load one PKAP file (single model) or four (per-street, order preflop/flop/turn/river).
+static std::vector<Net> load_nets(const std::string& spec) {
+  std::vector<std::string> paths = split_paths(spec);
+  if (paths.empty()) throw std::runtime_error("--weights is required");
+  if (paths.size() != 1 && paths.size() != 4)
+    throw std::runtime_error("--weights must be one file or four comma-separated files (per-street)");
+  std::vector<Net> nets;
+  nets.reserve(paths.size());
+  for (const auto& p : paths) nets.push_back(Net::load(p));
+  return nets;
+}
+
+static int street_of(int nb) {
+  return nb == 0 ? 0 : nb == 3 ? 1 : nb == 4 ? 2 : 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,21 +171,26 @@ static int cmd_gen(const Args& a) {
 
 // ---------------------------------------------------------------------------
 static int cmd_approx(const Args& a) {
-  Net net = Net::load(a.get("weights"));
   auto hero = parse_cards(a.get("hero"));
   auto board = board_arg(a.get("board"));
+  std::vector<Net> nets = load_nets(a.get("weights"));
+  const int nb = int(board.size());
+  const int street = street_of(nb);
+
   float f[kNumFeatures], w, t;
-  compute_features(hero.data(), board.data(), int(board.size()), f);
+  compute_features(hero.data(), board.data(), nb, f);
+  const Net& net = (nets.size() == 1) ? nets[0] : nets[street];
   net.predict(f, w, t);
-  std::printf("network: win %.2f%%  tie %.2f%%  equity %.2f%%  (vs one random opponent)\n", 100 * w, 100 * t,
-              100 * (w + t / 2));
+  std::printf("network%s: win %.2f%%  tie %.2f%%  equity %.2f%%  (vs one random opponent)\n",
+              nets.size() == 4 ? " (per-street)" : "",
+              100 * w, 100 * t, 100 * (w + t / 2));
   return 0;
 }
 
 struct Row { std::vector<Card> hero, board; int street; double win, tie, eq_se; };
 
 static int cmd_approx_eval(const Args& a) {
-  Net net = Net::load(a.get("weights"));
+  std::vector<Net> nets = load_nets(a.get("weights"));
   std::ifstream in(a.get("data"));
   if (!in) throw std::runtime_error("cannot open data file");
   std::string line;
@@ -172,6 +211,7 @@ static int cmd_approx_eval(const Args& a) {
   for (size_t i = 0; i < rows.size(); ++i) {
     float f[kNumFeatures], w, t;
     compute_features(rows[i].hero.data(), rows[i].board.data(), int(rows[i].board.size()), f);
+    const Net& net = (nets.size() == 1) ? nets[0] : nets[rows[i].street];
     net.predict(f, w, t);
     sink[i] = w + t / 2;
     const Row& r = rows[i];
@@ -182,16 +222,17 @@ static int cmd_approx_eval(const Args& a) {
   }
   double dt = now() - t0;
   const char* names[4] = {"preflop", "flop", "turn", "river"};
-  std::printf("network: %zu parameters (%.1f KB as float32); %zu rows\n", net.num_params(),
-              net.num_params() * 4 / 1024.0, rows.size());
+  std::printf("network%s: %zu parameters per model (%.1f KB as float32); %zu rows\n",
+              nets.size() == 4 ? " (per-street)" : "",
+              nets[0].num_params(), nets[0].num_params() * 4 / 1024.0, rows.size());
   double tot[3] = {0, 0, 0};
   for (int s = 0; s < 4; ++s) {
     std::printf("  %-8s n=%6.0f  MAE win %.2f%%  tie %.2f%%  equity %.2f%%\n", names[s], cnt[s],
                 100 * err[s][0] / cnt[s], 100 * err[s][1] / cnt[s], 100 * err[s][2] / cnt[s]);
     for (int k = 0; k < 3; ++k) tot[k] += err[s][k];
   }
-  std::printf("  overall  MAE win %.2f%%  tie %.2f%%  equity %.2f%%\n", 100 * tot[0] / rows.size(),
-              100 * tot[1] / rows.size(), 100 * tot[2] / rows.size());
+  std::printf("  overall  MAE win %.2f%%  tie %.2f%%  equity %.2f%%\n",
+              100 * tot[0] / rows.size(), 100 * tot[1] / rows.size(), 100 * tot[2] / rows.size());
   std::printf("  speed: %.2f microseconds per prediction (features + network)\n", 1e6 * dt / rows.size());
 
   // Reference: what does a 1,000-showdown Monte Carlo estimate cost and how accurate is it?
