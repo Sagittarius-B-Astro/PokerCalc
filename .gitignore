@@ -1,5 +1,26 @@
+# Python
 venv/
 __pycache__/
 *.pyc
-train.csv
-.vscode/c_cpp_properties.json
+*.pyo
+.train.csv
+
+# Emscripten toolchain (install locally with emsdk; never commit)
+emsdk/
+
+# Native build artifacts
+*.exe
+*.o
+*.obj
+*.pdb
+
+# Test artifacts and scratch files
+wide.bin
+wide.bin.report.txt
+
+# Editor / IDE
+.vscode/
+
+# OS cruft
+Thumbs.db
+.DS_Store
