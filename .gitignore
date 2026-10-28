@@ -13,6 +13,7 @@ emsdk/
 *.o
 *.obj
 *.pdb
+*.pdf
 
 # Test artifacts and scratch files
 data/wide.bin
