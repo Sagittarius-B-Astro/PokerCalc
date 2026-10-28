@@ -15,8 +15,8 @@ emsdk/
 *.pdb
 
 # Test artifacts and scratch files
-wide.bin
-wide.bin.report.txt
+data/wide.bin
+data/wide.bin.report.txt
 
 # Editor / IDE
 .vscode/
